@@ -5,14 +5,14 @@ import pandas as pd
 # Set page configuration
 st.set_page_config(layout="wide")
 
-st.title("Prediction Analysis Dashboard")
+st.title("Stadium Trading Analytics Page")
 
 # Load the data
 try:
     df = pd.read_csv('https://stadiumglobalchart.s3.us-east-2.amazonaws.com/global_chart.csv')
     # st.write("Data loaded successfully. First 5 rows:")
     # # st.write(df.head())
-    # st.write(f"Shape of the DataFrame: {df.shape}")
+    st.write(f"Recent trades by Stadium Trading's proprietary algorithms.")
     # st.write("Data types:")
     # st.write(df.dtypes)
 except FileNotFoundError:
