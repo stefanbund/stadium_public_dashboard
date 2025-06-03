@@ -12,7 +12,11 @@ try:
     df = pd.read_csv('https://stadiumglobalchart.s3.us-east-2.amazonaws.com/global_chart.csv')
     # st.write("Data loaded successfully. First 5 rows:")
     # # st.write(df.head())
-    st.write(f"Recent trades by Stadium Trading's proprietary algorithms.")
+    # st.header("Data Preparation")
+    # st.subheader("Sort Data by Timestamp")
+
+    st.write(f"Recent trades by Stadium Trading's proprietary algorithms. Use the figures below to track and analyze 120 days of trading activity.")
+    st.write(f"All trades are done autonomously by our prorprietary reinforcement learning. They are done autonomously, without human intervention.")
     # st.write("Data types:")
     # st.write(df.dtypes)
 except FileNotFoundError:
@@ -23,9 +27,6 @@ except Exception as e:
     df = None
 
 if df is not None:
-    st.header("Data Preparation")
-    st.subheader("Sort Data by Timestamp")
-
     # Convert 'prediction_timestamp_utc' to datetime objects if it's not already
     if not pd.api.types.is_datetime64_any_dtype(df['prediction_timestamp_utc']):
         try:
