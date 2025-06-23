@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stadium Trading Analytics</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+    <!-- Chart.js Adapter Luxon for time scales -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1/dist/chartjs-adapter-luxon.min.js"></script>
+    <!-- Chart.js Annotation Plugin for horizontal line -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+    <!-- PapaParse for CSV parsing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6; /* Light gray background */
+        }
+        .container {
+            max-width: 1200px;
+        }
+        .chart-container {
+            background-color: white;
+            padding: 1.5rem;
+            border-radius: 0.5rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin-bottom: 2rem;
+            min-height: 400px; /* Ensure charts have enough initial height */
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        canvas {
+            max-width: 100%;
+            height: auto;
+        }
+    </style>
+</head>
+<body class="p-4 sm:p-6 md:p-8">
+    <div class="container mx-auto">
+        <h1 class="text-3xl sm:text-4xl font-bold text-gray-900 mb-4 text-center">Stadium Trading Analytics Page</h1>
+
+        <div class="bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-4 rounded-md mb-8" role="alert">
+            <p class="font-bold">Recent Trades by Stadium Trading's Proprietary Algorithms</p>
+            <p>Use the figures below to track and analyze 120 days of trading activity. All trades are done autonomously by our proprietary reinforcement learning, without human intervention.</p>
+        </div>
+
+        <h2 class="text-2xl sm:text-3xl font-semibold text-gray-800 mb-6 text-center">Charts</h2>
+
+        <!-- Chart 1: Chronology of Predictions -->
+        <div class="chart-container">
+            <h3 class="text-xl sm:text-2xl font-medium text-gray-700 mb-4 text-center">A Chronology of Predictions</h3>
+            <p class="text-gray-600 text-sm mb-4 text-center">120 Days of autonomous trading across Coinbase. Each dot signifies one trade, and the time to complete each trade, in hours. The red line represents a six hour boundary.</p>
+            <canvas id="chronologyChart"></canvas>
+        </div>
+
+        <!-- Chart 2: Distribution of Trade Durations -->
+        <div class="chart-container">
+            <h3 class="text-xl sm:text-2xl font-medium text-gray-700 mb-4 text-center">Distribution of Trade Durations</h3>
+            <p class="text-gray-600 text-sm mb-4 text-center">120 Day Distribution of Time Durations, Entry to Trade Exit, in Hours by Symbol</p>
+            <canvas id="distributionChart"></canvas>
+            <p class="text-gray-600 text-sm mt-4 text-center">Detailed Distribution for each durational bin by Symbol</p>
+            <canvas id="detailedDistributionChart"></canvas>
+        </div>
+
+        <!-- Chart 3: Interactive Dashboard -->
+        <div class="chart-container">
+            <h3 class="text-xl sm:text-2xl font-medium text-gray-700 mb-4 text-center">Interactive Dashboard: Symbol Prevalence and Time Series</h3>
+            <p class="text-gray-600 text-sm mb-4 text-center">Ticker Symbols Traded in Period, En Masse, Last 120 Days. Click on a symbol in the top chart to filter the time series below.</p>
+            <canvas id="symbolPrevalenceChart" class="mb-8"></canvas>
+            <canvas id="timeSeriesChart"></canvas>
+        </div>
+    </div>
+
+    <script>
+        // Register Chart.js Annotation Plugin
+        Chart.register(ChartjsPluginAnnotation);
+
+        // Utility function to generate consistent colors for symbols
+        const getSymbolColor = (() => {
+            const colors = {};
+            const availableColors = [
+                '#4c78a8', '#f58518', '#e45756', '#72b7b2', '#54a24a', '#ee8c28', '#b279a2',
+                '#ff9da7', '#9d755d', '#bab0ac'
+            ]; // A set of distinct colors
+            let colorIndex = 0;
+            return (symbol) => {
+                if (!colors[symbol]) {
+                    colors[symbol] = availableColors[colorIndex % availableColors.length];
+                    colorIndex++;
+                }
+                return colors[symbol];
+            };
+        })();
+
+        let rawData = [];
+        let chronologyChart, distributionChart, detailedDistributionChart, symbolPrevalenceChart, timeSeriesChart;
+
+        // Function to load and parse CSV data
+        async function loadData() {
+            try {
+                const response = await fetch('https://stadiumglobalchart.s3.us-east-2.amazonaws.com/global_chart.csv');
+                const csvText = await response.text();
+
+                return new Promise((resolve, reject) => {
+                    PapaParse.parse(csvText, {
+                        header: true,
+                        dynamicTyping: true, // Automatically converts numbers and booleans
+                        skipEmptyLines: true,
+                        complete: function(results) {
+                            if (results.errors.length) {
+                                console.error('Parsing errors:', results.errors);
+                                reject(new Error('Failed to parse CSV.'));
+                            }
+                            resolve(results.data);
+                        },
+                        error: function(err) {
+                            reject(err);
+                        }
+                    });
+                });
+            } catch (error) {
+                console.error("Error loading data:", error);
+                document.querySelector('.bg-blue-100').innerHTML = `<p class="font-bold text-red-700">Error: Could not load data. Please check the network connection or data source.</p>`;
+                return null;
+            }
+        }
+
+        // Function to prepare data for charts
+        function prepareData(data) {
+            if (!data) return [];
+
+            return data.map(row => {
+                // Ensure prediction_timestamp_utc is a valid Date object
+                // Chart.js Luxon adapter handles string timestamps if they are ISO 8601,
+                // but converting to Date objects or numeric timestamps is safer.
+                try {
+                    row.prediction_timestamp_utc = new Date(row.prediction_timestamp_utc);
+                } catch (e) {
+                    console.warn(`Invalid date format for row: ${JSON.stringify(row)}`, e);
+                    row.prediction_timestamp_utc = null; // Mark as invalid
+                }
+                return row;
+            }).filter(row => row.prediction_timestamp_utc !== null); // Filter out rows with invalid dates
+        }
+
+        // Function to render Chronology Chart (Chart 1)
+        function renderChronologyChart(data) {
+            const ctx = document.getElementById('chronologyChart').getContext('2d');
+
+            const datasets = [];
+            const uniqueSymbols = [...new Set(data.map(d => d.symbol))];
+
+            uniqueSymbols.forEach(symbol => {
+                const symbolData = data.filter(d => d.symbol === symbol);
+                datasets.push({
+                    label: symbol,
+                    data: symbolData.map(d => ({
+                        x: d.prediction_timestamp_utc,
+                        y: d.hours_to_target_or_default,
+                        mp_at_prediction: d.mp_at_prediction,
+                        symbol: d.symbol
+                    })),
+                    backgroundColor: getSymbolColor(symbol),
+                    pointRadius: 4,
+                    hoverRadius: 6,
+                    borderColor: 'rgba(0,0,0,0.1)',
+                    borderWidth: 0.5
+                });
+            });
+
+
+            chronologyChart = new Chart(ctx, {
+                type: 'scatter',
+                data: { datasets: datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    aspectRatio: 1.8, // Adjust aspect ratio for better display
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const item = context.raw;
+                                    return [
+                                        `Symbol: ${item.symbol}`,
+                                        `Hours to Target or Default: ${item.y}`,
+                                        `Prediction Timestamp: ${new Date(item.x).toLocaleString()}`,
+                                        `MP at Prediction: ${item.mp_at_prediction}`
+                                    ];
+                                }
+                            }
+                        },
+                        annotation: {
+                            annotations: {
+                                line1: {
+                                    type: 'line',
+                                    yMin: 6,
+                                    yMax: 6,
+                                    borderColor: 'rgb(255, 99, 132)',
+                                    borderWidth: 2,
+                                    label: {
+                                        content: 'The six hour line',
+                                        enabled: true,
+                                        position: 'start',
+                                        backgroundColor: 'rgba(255, 99, 132, 0.8)',
+                                        font: {
+                                            size: 10
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: {
+                                unit: 'day',
+                                tooltipFormat: 'MMM D, YYYY h:mm A'
+                            },
+                            title: {
+                                display: true,
+                                text: 'Prediction Timestamp'
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Hours to Target or Default'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Function to render Distribution Charts (Chart 2)
+        function renderDistributionCharts(data) {
+            // Function to bin data for histogram
+            function getBinnedData(data, binSize = 1) {
+                const bins = {};
+                data.forEach(d => {
+                    const bin = Math.floor(d.hours_to_target_or_default / binSize) * binSize;
+                    if (!bins[bin]) {
+                        bins[bin] = {};
+                    }
+                    if (!bins[bin][d.symbol]) {
+                        bins[bin][d.symbol] = 0;
+                    }
+                    bins[bin][d.symbol]++;
+                });
+
+                const sortedBins = Object.keys(bins).sort((a, b) => parseFloat(a) - parseFloat(b));
+                const chartData = {};
+
+                sortedBins.forEach(bin => {
+                    for (const symbol in bins[bin]) {
+                        if (!chartData[symbol]) {
+                            chartData[symbol] = [];
+                        }
+                        chartData[symbol].push({ x: parseFloat(bin) + binSize / 2, y: bins[bin][symbol], binStart: parseFloat(bin), binEnd: parseFloat(bin) + binSize });
+                    }
+                });
+                return chartData;
+            }
+
+            // Overall Distribution (larger bins)
+            const overallBinnedData = getBinnedData(data, 6); // Bin by 6 hours
+            const overallDatasets = Object.keys(overallBinnedData).map(symbol => ({
+                label: symbol,
+                data: overallBinnedData[symbol],
+                backgroundColor: getSymbolColor(symbol),
+                borderColor: 'rgba(0,0,0,0.1)',
+                borderWidth: 1,
+                barPercentage: 1.0, // Make bars touch
+                categoryPercentage: 1.0
+            }));
+
+            const overallCtx = document.getElementById('distributionChart').getContext('2d');
+            distributionChart = new Chart(overallCtx, {
+                type: 'bar',
+                data: { datasets: overallDatasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    aspectRatio: 1.8,
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                title: function(context) {
+                                    const item = context[0].raw;
+                                    return `Hours: ${item.binStart} - ${item.binEnd}`;
+                                },
+                                label: function(context) {
+                                    const item = context.raw;
+                                    return `Symbol: ${context.dataset.label}, Frequency: ${item.y}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            offset: false, // Ensure bars align with start of bin
+                            grid: {
+                                offset: false
+                            },
+                            title: {
+                                display: true,
+                                text: 'Hours to Exit (Trade Duration, in Hours)'
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Frequency'
+                            }
+                        }
+                    }
+                }
+            });
+
+            // Detailed Distribution (smaller bins)
+            const detailedBinnedData = getBinnedData(data, 1); // Bin by 1 hour
+            const detailedDatasets = Object.keys(detailedBinnedData).map(symbol => ({
+                label: symbol,
+                data: detailedBinnedData[symbol],
+                backgroundColor: getSymbolColor(symbol),
+                borderColor: 'rgba(0,0,0,0.1)',
+                borderWidth: 1,
+                barPercentage: 1.0,
+                categoryPercentage: 1.0
+            }));
+
+            const detailedCtx = document.getElementById('detailedDistributionChart').getContext('2d');
+            detailedDistributionChart = new Chart(detailedCtx, {
+                type: 'bar',
+                data: { datasets: detailedDatasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    aspectRatio: 1.8,
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                title: function(context) {
+                                    const item = context[0].raw;
+                                    return `Hours: ${item.binStart} - ${item.binEnd}`;
+                                },
+                                label: function(context) {
+                                    const item = context.raw;
+                                    return `Symbol: ${context.dataset.label}, Frequency: ${item.y}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            offset: false,
+                            grid: {
+                                offset: false
+                            },
+                            title: {
+                                display: true,
+                                text: 'Hour detail'
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Frequency'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Function to render Interactive Dashboard (Chart 3)
+        function renderInteractiveDashboard(data) {
+            const symbolCounts = {};
+            data.forEach(d => {
+                symbolCounts[d.symbol] = (symbolCounts[d.symbol] || 0) + 1;
+            });
+            const sortedSymbols = Object.keys(symbolCounts).sort();
+
+            const symbolPrevalenceCtx = document.getElementById('symbolPrevalenceChart').getContext('2d');
+            symbolPrevalenceChart = new Chart(symbolPrevalenceCtx, {
+                type: 'bar',
+                data: {
+                    labels: sortedSymbols,
+                    datasets: [{
+                        label: 'Number of Trades',
+                        data: sortedSymbols.map(symbol => symbolCounts[symbol]),
+                        backgroundColor: sortedSymbols.map(symbol => getSymbolColor(symbol)),
+                        borderColor: 'rgba(0,0,0,0.1)',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    aspectRatio: 1.5,
+                    indexAxis: 'y', // Horizontal bars
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return `Ticker Symbol: ${context.label}, Number of Entries: ${context.parsed.x}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'How Many Trades Done, 120 Day Period'
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Symbol'
+                            }
+                        }
+                    },
+                    onClick: (event, elements) => {
+                        if (elements.length > 0) {
+                            const clickedElement = elements[0];
+                            const symbol = symbolPrevalenceChart.data.labels[clickedElement.index];
+                            updateTimeSeriesChart(symbol);
+
+                            // Reset opacity for all bars
+                            symbolPrevalenceChart.data.datasets[0].backgroundColor = sortedSymbols.map(s => getSymbolColor(s));
+                            // Dim non-selected bars
+                            symbolPrevalenceChart.data.datasets[0].backgroundColor[clickedElement.index] = getSymbolColor(symbol);
+                            symbolPrevalenceChart.data.datasets[0].backgroundColor = symbolPrevalenceChart.data.datasets[0].backgroundColor.map((color, index) => {
+                                return index === clickedElement.index ? color : `${color}80`; // Add transparency
+                            });
+                            symbolPrevalenceChart.update();
+                        } else {
+                            // If no bar is clicked, show all data
+                            updateTimeSeriesChart(null);
+                            // Reset opacity
+                            symbolPrevalenceChart.data.datasets[0].backgroundColor = sortedSymbols.map(s => getSymbolColor(s));
+                            symbolPrevalenceChart.update();
+                        }
+                    }
+                }
+            });
+
+            const timeSeriesCtx = document.getElementById('timeSeriesChart').getContext('2d');
+            timeSeriesChart = new Chart(timeSeriesCtx, {
+                type: 'scatter',
+                data: {
+                    datasets: [{
+                        label: 'Time Series',
+                        data: data.map(d => ({
+                            x: d.prediction_timestamp_utc,
+                            y: d.hours_to_target_or_default,
+                            symbol: d.symbol
+                        })),
+                        backgroundColor: data.map(d => getSymbolColor(d.symbol)),
+                        pointRadius: 4,
+                        hoverRadius: 6,
+                        borderColor: 'rgba(0,0,0,0.1)',
+                        borderWidth: 0.5
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    aspectRatio: 1.5,
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const item = context.raw;
+                                    return [
+                                        `Symbol: ${item.symbol}`,
+                                        `Prediction Timestamp: ${new Date(item.x).toLocaleString()}`,
+                                        `Hours to Target or Default: ${item.y}`
+                                    ];
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: {
+                                unit: 'day',
+                                tooltipFormat: 'MMM D, YYYY h:mm A'
+                            },
+                            title: {
+                                display: true,
+                                text: 'Prediction Timestamp'
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Hours to Target or Default'
+                            }
+                        }
+                    }
+                }
+            });
+
+            function updateTimeSeriesChart(selectedSymbol) {
+                let filteredData = selectedSymbol ? rawData.filter(d => d.symbol === selectedSymbol) : rawData;
+
+                timeSeriesChart.data.datasets[0].data = filteredData.map(d => ({
+                    x: d.prediction_timestamp_utc,
+                    y: d.hours_to_target_or_default,
+                    symbol: d.symbol
+                }));
+                timeSeriesChart.data.datasets[0].backgroundColor = filteredData.map(d => getSymbolColor(d.symbol));
+                timeSeriesChart.options.plugins.title = {
+                    display: true,
+                    text: selectedSymbol ? `Time Series for ${selectedSymbol}` : 'Time Series for All Symbols',
+                    padding: { top: 10, bottom: 0 },
+                    font: { size: 16 }
+                };
+                timeSeriesChart.update();
+            }
+        }
+
+        // Main function to initialize the dashboard
+        async function initDashboard() {
+            rawData = await loadData();
+            if (rawData) {
+                const preparedData = prepareData(rawData);
+                renderChronologyChart(preparedData);
+                renderDistributionCharts(preparedData);
+                renderInteractiveDashboard(preparedData);
+            }
+        }
+
+        // Run the dashboard initialization when the window loads
+        window.onload = initDashboard;
+    </script>
+</body>
+</html>
